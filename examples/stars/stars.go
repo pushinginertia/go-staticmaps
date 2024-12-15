@@ -7,7 +7,7 @@ import (
 	"math"
 	"math/rand"
 
-	sm "github.com/flopp/go-staticmaps"
+	sm "github.com/pushinginertia/go-staticmaps"
 	"github.com/fogleman/gg"
 	"github.com/golang/geo/s2"
 )

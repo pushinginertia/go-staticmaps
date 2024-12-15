@@ -9,7 +9,7 @@ import "fmt"
 
 // TileProvider encapsulates all infos about a map tile provider service (name, url scheme, attribution, etc.)
 type TileProvider struct {
-	Name           string
+	Name           string // writes to {cachedir}/{Name}
 	Attribution    string
 	IgnoreNotFound bool
 	TileSize       int
@@ -30,6 +30,41 @@ func NewTileProviderOpenStreetMaps() *TileProvider {
 	t.URLPattern = "http://%[1]s.tile.openstreetmap.org/%[2]d/%[3]d/%[4]d.png"
 	t.Shards = []string{"a", "b", "c"}
 	return t
+}
+
+// Use ppi=72 for normal size or ppi=320 for retina output at 2x.
+//
+// Use mapId=newest to get the latest map tiles, or see this link for how to
+// check for the current hash value:
+// https://developer.here.com/documentation/map-tile/topics/map-versions.html
+//
+// If using a cache and mapId=newest, it should be cleared periodically or
+// generated maps may not be correct when matching older cached tiles with
+// newer fetched tiles.
+//
+// See https://developer.here.com/documentation/map-tile/topics/resource-base-maptile.html
+// for valid values for map ID and scheme.
+func NewTileProviderHere(mapId, scheme string, ppi int, appId, appCode string) *TileProvider {
+	// URL Structure:
+	// https://{1-4}.base.maps.api.here.com
+	// /maptile/2.1/maptile/{map id}/{scheme}/{zoom}/{column}/{row}/{size}/{format}
+	// ?app_id={YOUR_APP_ID}
+	// &app_code={YOUR_APP_CODE}
+	// &{param}={value}
+	return &TileProvider{
+		Name:        "here",
+		Attribution: "here.com",
+		TileSize:    512,
+		URLPattern: fmt.Sprintf(
+			"https://%%[1]s.base.maps.cit.api.here.com/maptile/2.1/maptile/%s/%s/%%[2]d/%%[3]d/%%[4]d/512/png?ppi=%v&app_id=%s&app_code=%s",
+			mapId,
+			scheme,
+			ppi,
+			appId,
+			appCode,
+		),
+		Shards: []string{"1", "2", "3", "4"},
+	}
 }
 
 func newTileProviderThunderforest(name string) *TileProvider {

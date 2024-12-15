@@ -13,6 +13,7 @@ import (
 	_ "image/jpeg" // to be able to decode jpegs
 	_ "image/png"  // to be able to decode pngs
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"syscall"
 )
 
 var errTileNotFound = errors.New("error 404: tile not found")
@@ -141,18 +143,7 @@ func (t *TileFetcher) loadCache(fileName string) (image.Image, error) {
 }
 
 func (t *TileFetcher) createCacheDir(path string) error {
-	src, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return os.MkdirAll(path, t.cache.Perm())
-		}
-		return err
-	}
-	if src.IsDir() {
-		return nil
-	}
-
-	return fmt.Errorf("file exists but is not a directory: %s", path)
+	return os.MkdirAll(path, t.cache.Perm())
 }
 
 func (t *TileFetcher) storeCache(fileName string, data []byte) error {
@@ -166,9 +157,18 @@ func (t *TileFetcher) storeCache(fileName string, data []byte) error {
 	// 'x' bit removed.
 	file, err := os.OpenFile(
 		fileName,
-		os.O_RDWR|os.O_CREATE|os.O_TRUNC,
+		os.O_RDWR|os.O_CREATE|os.O_EXCL,
 		t.cache.Perm()&0666,
 	)
+	if pathErr, ok := err.(*fs.PathError); ok {
+		if syscallErr, ok := pathErr.Err.(syscall.Errno); ok && syscallErr == syscall.EEXIST {
+			// File existence implies that another concurrent tile fetch has
+			// occurred and written before this fetch. Assume that the cache write
+			// was successful and return nil.
+			log.Printf("Not writing cache file that already exists: %v", fileName)
+			return nil
+		}
+	}
 	if err != nil {
 		return err
 	}
