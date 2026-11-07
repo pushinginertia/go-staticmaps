@@ -15,13 +15,14 @@ import (
 	"io"
 	"io/fs"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"syscall"
+
+	"go.uber.org/zap"
 )
 
 var errTileNotFound = errors.New("error 404: tile not found")
@@ -66,35 +67,49 @@ func cacheFileName(cache TileCache, providerName string, zoom, x, y int) string 
 	)
 }
 
-// Fetch download (or retrieves from the cache) a tile image for the specified zoom level and tile coordinates
-func (t *TileFetcher) Fetch(zoom, x, y int) (image.Image, error) {
+// Fetch download (or retrieves from the cache) a tile image for the specified zoom level
+// and tile coordinates. Return true if successfully fetched from the mapping service.
+func (t *TileFetcher) Fetch(zoom, x, y int, log *zap.Logger) (image.Image, bool, error) {
 	if t.cache != nil {
 		fileName := cacheFileName(t.cache, t.tileProvider.Name, zoom, x, y)
 		cachedImg, err := t.loadCache(fileName)
 		if err == nil {
-			return cachedImg, nil
+			return cachedImg, false, nil
 		}
 	}
 
 	url := t.url(zoom, x, y)
 	data, err := t.download(url)
 	if err != nil {
-		return nil, err
+		return nil, false, fmt.Errorf(
+			"error downloading tile file at '%s' for zoom=%d, x=%d, y=%d: %w",
+			url,
+			zoom,
+			x,
+			y,
+			err,
+		)
 	}
 
 	img, _, err := image.Decode(bytes.NewBuffer(data))
 	if err != nil {
-		return nil, err
+		return nil, true, fmt.Errorf(
+			"error decoding tile file for zoom=%d, x=%d, y=%d: %w",
+			zoom,
+			x,
+			y,
+			err,
+		)
 	}
 
 	if t.cache != nil {
 		fileName := cacheFileName(t.cache, t.tileProvider.Name, zoom, x, y)
-		if err := t.storeCache(fileName, data); err != nil {
-			log.Printf("Failed to store map tile as '%s': %s", fileName, err)
+		if err := t.storeCache(fileName, data, log); err != nil {
+			log.Warn("Failed to store map tile", zap.String("fileName", fileName), zap.Error(err))
 		}
 	}
 
-	return img, nil
+	return img, true, nil
 }
 
 func (t *TileFetcher) download(url string) ([]byte, error) {
@@ -146,7 +161,7 @@ func (t *TileFetcher) createCacheDir(path string) error {
 	return os.MkdirAll(path, t.cache.Perm())
 }
 
-func (t *TileFetcher) storeCache(fileName string, data []byte) error {
+func (t *TileFetcher) storeCache(fileName string, data []byte, log *zap.Logger) error {
 	dir, _ := filepath.Split(fileName)
 
 	if err := t.createCacheDir(dir); err != nil {
@@ -165,7 +180,7 @@ func (t *TileFetcher) storeCache(fileName string, data []byte) error {
 			// File existence implies that another concurrent tile fetch has
 			// occurred and written before this fetch. Assume that the cache write
 			// was successful and return nil.
-			log.Printf("Not writing cache file that already exists: %v", fileName)
+			log.Warn("Not writing cache file that already exists", zap.String("fileName", fileName))
 			return nil
 		}
 	}

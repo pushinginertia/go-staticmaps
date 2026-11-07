@@ -7,16 +7,16 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sort"
 	"strings"
 
 	"github.com/flopp/go-coordsparser"
-	sm "github.com/pushinginertia/go-staticmaps"
 	"github.com/fogleman/gg"
 	"github.com/golang/geo/s2"
 	"github.com/jessevdk/go-flags"
+	sm "github.com/pushinginertia/go-staticmaps"
+	"go.uber.org/zap"
 )
 
 func handleTypeOption(ctx *sm.Context, parameter string) {
@@ -43,19 +43,19 @@ func handleTypeOption(ctx *sm.Context, parameter string) {
 	os.Exit(0)
 }
 
-func handleCenterOption(ctx *sm.Context, parameter string) {
+func handleCenterOption(ctx *sm.Context, parameter string) error {
 	lat, lng, err := coordsparser.Parse(parameter)
 	if err != nil {
-		log.Fatal(err)
-	} else {
-		ctx.SetCenter(s2.LatLngFromDegrees(lat, lng))
+		return err
 	}
+	ctx.SetCenter(s2.LatLngFromDegrees(lat, lng))
+	return nil
 }
 
-func handleBboxOption(ctx *sm.Context, parameter string) {
+func handleBboxOption(ctx *sm.Context, parameter string) error {
 	pair := strings.Split(parameter, "|")
 	if len(pair) != 2 {
-		log.Fatalf("Bad NW|SE coordinates pair: %s", parameter)
+		return fmt.Errorf("bad NW|SE coordinates pair: %s", parameter)
 	}
 
 	var err error
@@ -65,118 +65,132 @@ func handleBboxOption(ctx *sm.Context, parameter string) {
 	var selng float64
 	nwlat, nwlng, err = coordsparser.Parse(pair[0])
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	selat, selng, err = coordsparser.Parse(pair[1])
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	var bbox *s2.Rect
 	bbox, err = sm.CreateBBox(nwlat, nwlng, selat, selng)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	ctx.SetBoundingBox(*bbox)
+	return nil
 }
 
-func handleBackgroundOption(ctx *sm.Context, parameter string) {
+func handleBackgroundOption(ctx *sm.Context, parameter string) error {
 	color, err := sm.ParseColorString(parameter)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	ctx.SetBackground(color)
+	return nil
 }
 
-func handleMarkersOption(ctx *sm.Context, parameters []string) {
+func handleMarkersOption(ctx *sm.Context, parameters []string) error {
 	for _, s := range parameters {
 		markers, err := sm.ParseMarkerString(s)
 		if err != nil {
-			log.Fatal(err)
-		} else {
-			for _, marker := range markers {
-				ctx.AddObject(marker)
-			}
+			return err
+		}
+		for _, marker := range markers {
+			ctx.AddObject(marker)
 		}
 	}
+	return nil
 }
 
-func handleImageMarkersOption(ctx *sm.Context, parameters []string) {
+func handleImageMarkersOption(ctx *sm.Context, parameters []string) error {
 	for _, s := range parameters {
 		markers, err := sm.ParseImageMarkerString(s)
 		if err != nil {
-			log.Fatal(err)
-		} else {
-			for _, marker := range markers {
-				ctx.AddObject(marker)
-			}
+			return err
+		}
+		for _, marker := range markers {
+			ctx.AddObject(marker)
 		}
 	}
+	return nil
 }
 
-func handlePathsOption(ctx *sm.Context, parameters []string) {
+func handlePathsOption(ctx *sm.Context, parameters []string) error {
 	for _, s := range parameters {
 		paths, err := sm.ParsePathString(s)
 		if err != nil {
-			log.Fatal(err)
-		} else {
-			for _, path := range paths {
-				ctx.AddObject(path)
-			}
+			return err
+		}
+		for _, path := range paths {
+			ctx.AddObject(path)
 		}
 	}
+	return nil
 }
 
-func handleAreasOption(ctx *sm.Context, parameters []string) {
+func handleAreasOption(ctx *sm.Context, parameters []string) error {
 	for _, s := range parameters {
 		area, err := sm.ParseAreaString(s)
 		if err != nil {
-			log.Fatal(err)
-		} else {
-			ctx.AddObject(area)
+			return err
 		}
+		ctx.AddObject(area)
 	}
+	return nil
 }
 
-func handleCirclesOption(ctx *sm.Context, parameters []string) {
+func handleCirclesOption(ctx *sm.Context, parameters []string) error {
 	for _, s := range parameters {
 		circles, err := sm.ParseCircleString(s)
 		if err != nil {
-			log.Fatal(err)
-		} else {
-			for _, circle := range circles {
-				ctx.AddObject(circle)
-			}
+			return err
+		}
+		for _, circle := range circles {
+			ctx.AddObject(circle)
 		}
 	}
+	return nil
+}
+
+type Opts struct {
+	//		ClearCache bool     `long:"clear-cache" description:"Clears the tile cache"`
+	Width        int      `long:"width" description:"Width of the generated static map image" value-name:"PIXELS" default:"512"`
+	Height       int      `long:"height" description:"Height of the generated static map image" value-name:"PIXELS" default:"512"`
+	Output       string   `short:"o" long:"output" description:"Output file name" value-name:"FILENAME" default:"map.png"`
+	Type         string   `short:"t" long:"type" description:"Select the map type; list possible map types with '--type list'" value-name:"MAPTYPE"`
+	Center       string   `short:"c" long:"center" description:"Center coordinates (lat,lng) of the static map" value-name:"LATLNG"`
+	Zoom         int      `short:"z" long:"zoom" description:"Zoom factor" value-name:"ZOOMLEVEL"`
+	BBox         string   `short:"b" long:"bbox" description:"Bounding box of the static map" value-name:"nwLATLNG|seLATLNG"`
+	Background   string   `long:"background" description:"Background color" value-name:"COLOR" default:"transparent"`
+	UserAgent    string   `short:"u" long:"useragent" description:"Overwrite the default HTTP user agent string" value-name:"USERAGENT"`
+	Markers      []string `short:"m" long:"marker" description:"Add a marker to the static map" value-name:"MARKER"`
+	ImageMarkers []string `short:"i" long:"imagemarker" description:"Add an image marker to the static map" value-name:"MARKER"`
+	Paths        []string `short:"p" long:"path" description:"Add a path to the static map" value-name:"PATH"`
+	Areas        []string `short:"a" long:"area" description:"Add an area to the static map" value-name:"AREA"`
+	Circles      []string `short:"C" long:"circle" description:"Add a circle to the static map" value-name:"CIRCLE"`
 }
 
 func main() {
-	var opts struct {
-		//		ClearCache bool     `long:"clear-cache" description:"Clears the tile cache"`
-		Width        int      `long:"width" description:"Width of the generated static map image" value-name:"PIXELS" default:"512"`
-		Height       int      `long:"height" description:"Height of the generated static map image" value-name:"PIXELS" default:"512"`
-		Output       string   `short:"o" long:"output" description:"Output file name" value-name:"FILENAME" default:"map.png"`
-		Type         string   `short:"t" long:"type" description:"Select the map type; list possible map types with '--type list'" value-name:"MAPTYPE"`
-		Center       string   `short:"c" long:"center" description:"Center coordinates (lat,lng) of the static map" value-name:"LATLNG"`
-		Zoom         int      `short:"z" long:"zoom" description:"Zoom factor" value-name:"ZOOMLEVEL"`
-		BBox         string   `short:"b" long:"bbox" description:"Bounding box of the static map" value-name:"nwLATLNG|seLATLNG"`
-		Background   string   `long:"background" description:"Background color" value-name:"COLOR" default:"transparent"`
-		UserAgent    string   `short:"u" long:"useragent" description:"Overwrite the default HTTP user agent string" value-name:"USERAGENT"`
-		Markers      []string `short:"m" long:"marker" description:"Add a marker to the static map" value-name:"MARKER"`
-		ImageMarkers []string `short:"i" long:"imagemarker" description:"Add an image marker to the static map" value-name:"MARKER"`
-		Paths        []string `short:"p" long:"path" description:"Add a path to the static map" value-name:"PATH"`
-		Areas        []string `short:"a" long:"area" description:"Add an area to the static map" value-name:"AREA"`
-		Circles      []string `short:"C" long:"circle" description:"Add a circle to the static map" value-name:"CIRCLE"`
+
+	// Fetch the default production configuration and redirect the output destination
+	// from stderr to stdout, then build the logger instance from the config.
+	config := zap.NewProductionConfig()
+	config.OutputPaths = []string{"stdout"}
+	log, err := config.Build()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize zap logger: %v\n", err)
+		os.Exit(1)
 	}
 
+	var opts Opts
 	parser := flags.NewParser(&opts, flags.HelpFlag|flags.PassDoubleDash)
 	parser.LongDescription = `Creates a static map`
-	_, err := parser.Parse()
-	if err != nil {
-		log.Fatal(err)
+	if _, err := parser.Parse(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse flags: %v\n", err)
+		os.Exit(1)
 	}
 
 	if parser.FindOptionByLongName("help").IsSet() {
@@ -184,8 +198,15 @@ func main() {
 		os.Exit(0)
 	}
 
-	ctx := sm.NewContext()
+	ctx := sm.NewContext(log)
 
+	if err := run(ctx, parser, opts); err != nil {
+		fmt.Fprintf(os.Stderr, "Run failure: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx *sm.Context, parser *flags.Parser, opts Opts) error {
 	if parser.FindOptionByLongName("type").IsSet() {
 		handleTypeOption(ctx, opts.Type)
 	}
@@ -197,33 +218,51 @@ func main() {
 	}
 
 	if parser.FindOptionByLongName("center").IsSet() {
-		handleCenterOption(ctx, opts.Center)
+		if err := handleCenterOption(ctx, opts.Center); err != nil {
+			return err
+		}
 	}
 
 	if parser.FindOptionByLongName("bbox").IsSet() {
-		handleBboxOption(ctx, opts.BBox)
+		if err := handleBboxOption(ctx, opts.BBox); err != nil {
+			return err
+		}
 	}
 
 	if parser.FindOptionByLongName("background").IsSet() {
-		handleBackgroundOption(ctx, opts.Background)
+		if err := handleBackgroundOption(ctx, opts.Background); err != nil {
+			return err
+		}
 	}
 
 	if parser.FindOptionByLongName("useragent").IsSet() {
 		ctx.SetUserAgent(opts.UserAgent)
 	}
 
-	handleAreasOption(ctx, opts.Areas)
-	handleMarkersOption(ctx, opts.Markers)
-	handleImageMarkersOption(ctx, opts.ImageMarkers)
-	handleCirclesOption(ctx, opts.Circles)
-	handlePathsOption(ctx, opts.Paths)
+	if err := handleAreasOption(ctx, opts.Areas); err != nil {
+		return err
+	}
+	if err := handleMarkersOption(ctx, opts.Markers); err != nil {
+		return err
+	}
+	if err := handleImageMarkersOption(ctx, opts.ImageMarkers); err != nil {
+		return err
+	}
+	if err := handleCirclesOption(ctx, opts.Circles); err != nil {
+		return err
+	}
+	if err := handlePathsOption(ctx, opts.Paths); err != nil {
+		return err
+	}
 
-	img, err := ctx.Render()
+	img, _, err := ctx.Render()
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to render image: %w", err)
 	}
 
 	if err = gg.SavePNG(opts.Output, img); err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to save image: %w", err)
 	}
+
+	return nil
 }

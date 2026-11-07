@@ -10,5 +10,6 @@ require (
 	github.com/golang/geo v0.0.0-20210108004804-a63082ebfb66
 	github.com/jessevdk/go-flags v1.4.0
 	github.com/tkrajina/gpxgo v1.0.1
+	go.uber.org/zap v1.28.0
 	golang.org/x/image v0.0.0-20201208152932-35266b937fa6
 )

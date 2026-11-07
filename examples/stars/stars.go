@@ -7,9 +7,10 @@ import (
 	"math"
 	"math/rand"
 
-	sm "github.com/pushinginertia/go-staticmaps"
 	"github.com/fogleman/gg"
 	"github.com/golang/geo/s2"
+	sm "github.com/pushinginertia/go-staticmaps"
+	"go.uber.org/zap"
 )
 
 // Star represents a 5-pointed star on the map
@@ -62,7 +63,11 @@ func (s *Star) Draw(gc *gg.Context, trans *sm.Transformer) {
 }
 
 func main() {
-	ctx := sm.NewContext()
+	log, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	ctx := sm.NewContext(log)
 	ctx.SetSize(400, 300)
 
 	for i := 0; i < 10; i++ {
@@ -73,7 +78,7 @@ func main() {
 		ctx.AddObject(star)
 	}
 
-	img, err := ctx.Render()
+	img, _, err := ctx.Render()
 	if err != nil {
 		panic(err)
 	}

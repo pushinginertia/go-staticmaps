@@ -8,16 +8,17 @@ package sm
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
-	"log"
 	"math"
 
 	"github.com/fogleman/gg"
 	"github.com/golang/geo/r2"
 	"github.com/golang/geo/s1"
 	"github.com/golang/geo/s2"
+	"go.uber.org/zap"
 )
 
 // Context holds all information about the map image that is to be rendered
@@ -44,10 +45,12 @@ type Context struct {
 	cache        TileCache
 
 	overrideAttribution *string
+
+	log *zap.Logger
 }
 
 // NewContext creates a new instance of Context
-func NewContext() *Context {
+func NewContext(log *zap.Logger) *Context {
 	t := new(Context)
 	t.width = 512
 	t.height = 512
@@ -58,6 +61,7 @@ func NewContext() *Context {
 	t.userAgent = ""
 	t.tileProvider = NewTileProviderOpenStreetMaps()
 	t.cache = NewTileCacheFromUserCache(t.tileProvider.Name, 0777)
+	t.log = log
 	return t
 }
 
@@ -264,7 +268,7 @@ func (m *Context) determineZoom(bounds s2.Rect, center s2.LatLng) int {
 	w := (float64(m.width) - marginL - marginR) / float64(tileSize)
 	h := (float64(m.height) - marginT - marginB) / float64(tileSize)
 	if w <= 0 || h <= 0 {
-		log.Printf("Object margins are bigger than the target image size => ignoring object margins for calculation of the zoom level")
+		m.log.Info("Object margins are bigger than the target image size => ignoring object margins for calculation of the zoom level")
 		w = float64(m.width) / float64(tileSize)
 		h = float64(m.height) / float64(tileSize)
 	}
@@ -338,7 +342,7 @@ func (m *Context) adjustCenter(center s2.LatLng, zoom int) s2.LatLng {
 	}
 
 	if (maxX-minX) > float64(m.width) || (maxY-minY) > float64(m.height) {
-		log.Printf("Object margins are bigger than the target image size => ignoring object margins for adjusting the center")
+		m.log.Info("Object margins are bigger than the target image size => ignoring object margins for adjusting the center")
 		return center
 	}
 
@@ -483,10 +487,10 @@ func (t *Transformer) Rect() (bbox s2.Rect) {
 }
 
 // Render actually renders the map image including all map objects (markers, paths, areas)
-func (m *Context) Render() (image.Image, error) {
+func (m *Context) Render() (image.Image, int, error) {
 	zoom, center, err := m.determineZoomCenter()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	tileSize := m.tileProvider.TileSize
@@ -503,9 +507,12 @@ func (m *Context) Render() (image.Image, error) {
 		layers = append(layers, m.overlays...)
 	}
 
+	serviceFetchCount := 0
 	for _, layer := range layers {
-		if err := m.renderLayer(gc, zoom, trans, tileSize, layer); err != nil {
-			return nil, err
+		layerServiceFetchCount, err := m.renderLayer(gc, zoom, trans, tileSize, layer)
+		serviceFetchCount += layerServiceFetchCount
+		if err != nil {
+			return nil, serviceFetchCount, fmt.Errorf("renderLayer: %w", err)
 		}
 	}
 
@@ -523,7 +530,7 @@ func (m *Context) Render() (image.Image, error) {
 	// draw attribution
 	attribution := m.Attribution()
 	if attribution == "" {
-		return croppedImg, nil
+		return croppedImg, serviceFetchCount, nil
 	}
 	_, textHeight := gc.MeasureString(attribution)
 	boxHeight := textHeight + 4.0
@@ -534,7 +541,7 @@ func (m *Context) Render() (image.Image, error) {
 	gc.SetRGBA(1.0, 1.0, 1.0, 0.75)
 	gc.DrawString(attribution, 4.0, float64(m.height)-4.0)
 
-	return croppedImg, nil
+	return croppedImg, serviceFetchCount, nil
 }
 
 // RenderWithTransformer actually renders the map image including all map objects (markers, paths, areas).
@@ -563,7 +570,7 @@ func (m *Context) RenderWithTransformer() (image.Image, *Transformer, error) {
 	}
 
 	for _, layer := range layers {
-		if err := m.renderLayer(gc, zoom, trans, tileSize, layer); err != nil {
+		if _, err := m.renderLayer(gc, zoom, trans, tileSize, layer); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -602,13 +609,21 @@ func (m *Context) RenderWithBounds() (image.Image, s2.Rect, error) {
 	return img, trans.Rect(), nil
 }
 
-func (m *Context) renderLayer(gc *gg.Context, zoom int, trans *Transformer, tileSize int, provider *TileProvider) error {
+// Return the number of requests made to the mapping service which it accepted.
+func (m *Context) renderLayer(
+	gc *gg.Context,
+	zoom int,
+	trans *Transformer,
+	tileSize int,
+	provider *TileProvider,
+) (int, error) {
 	t := NewTileFetcher(provider, m.cache)
 	if m.userAgent != "" {
 		t.SetUserAgent(m.userAgent)
 	}
 
-	tiles := (1 << uint(zoom))
+	serviceFetchCount := 0
+	tiles := 1 << uint(zoom)
 	for xx := 0; xx < trans.tCountX; xx++ {
 		x := trans.tOriginX + xx
 		if x < 0 {
@@ -617,27 +632,35 @@ func (m *Context) renderLayer(gc *gg.Context, zoom int, trans *Transformer, tile
 			x = x - tiles
 		}
 		if x < 0 || x >= tiles {
-			log.Printf("Skipping out of bounds tile column %d/?", x)
+			m.log.Info("Skipping out of bounds tile column", zap.Int("x", x), zap.Int("tiles", tiles))
 			continue
 		}
 		for yy := 0; yy < trans.tCountY; yy++ {
 			y := trans.tOriginY + yy
 			if y < 0 || y >= tiles {
-				log.Printf("Skipping out of bounds tile %d/%d", x, y)
+				m.log.Info("Skipping out of bounds tile", zap.Int("x", x), zap.Int("y", y))
 				continue
 			}
 
-			if tileImg, err := t.Fetch(zoom, x, y); err == nil {
+			tileImg, fromService, err := t.Fetch(zoom, x, y, m.log)
+			if fromService {
+				serviceFetchCount++
+			}
+			if err == nil {
 				gc.DrawImage(tileImg, xx*tileSize, yy*tileSize)
 			} else if err == errTileNotFound && provider.IgnoreNotFound {
-				log.Printf("Error downloading tile file: %s (Ignored)", err)
+				m.log.Warn(
+					"Error downloading tile file (Ignored)",
+					zap.Int("x", x),
+					zap.Int("y", y),
+					zap.Error(err),
+				)
 				continue
 			} else {
-				log.Printf("Error downloading tile file: %s", err)
-				return err
+				return serviceFetchCount, err
 			}
 		}
 	}
 
-	return nil
+	return serviceFetchCount, nil
 }

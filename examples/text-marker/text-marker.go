@@ -6,9 +6,10 @@ import (
 	"image/color"
 	"math"
 
-	sm "github.com/pushinginertia/go-staticmaps"
 	"github.com/fogleman/gg"
 	"github.com/golang/geo/s2"
+	sm "github.com/pushinginertia/go-staticmaps"
+	"go.uber.org/zap"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
 )
@@ -80,7 +81,11 @@ func (s *TextMarker) Draw(gc *gg.Context, trans *sm.Transformer) {
 }
 
 func main() {
-	ctx := sm.NewContext()
+	log, err := zap.NewProduction()
+	if err != nil {
+		panic(err)
+	}
+	ctx := sm.NewContext(log)
 	ctx.SetSize(400, 300)
 
 	berlin := NewTextMarker(s2.LatLngFromDegrees(52.517037, 13.388860), "Berlin")
@@ -90,7 +95,7 @@ func main() {
 	ctx.AddObject(london)
 	ctx.AddObject(paris)
 
-	img, err := ctx.Render()
+	img, _, err := ctx.Render()
 	if err != nil {
 		panic(err)
 	}
